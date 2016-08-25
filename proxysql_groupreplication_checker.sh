@@ -53,15 +53,18 @@ MYSQL_CMDLINE="timeout $TIMEOUT mysql -nNE -u$MYSQL_USERNAME -p$MYSQL_PASSWORD "
 
 $PROXYSQL_CMDLINE "SELECT hostgroup_id, hostname, port, status, max_replication_lag FROM mysql_servers WHERE hostgroup_id IN ($HOSTGROUP_WRITER_ID, $HOSTGROUP_READER_ID) AND status <> 'OFFLINE_HARD'" | while read hostgroup server port stat max_replication_lag
 do
-  read GR_STATUS READONLY TRX_BEHIND <<<$($MYSQL_CMDLINE -h $server -P $port -e "SELECT concat(viable_candidate, ' ', read_only, ' ',transactions_behind) FROM sys.gr_member_routing_candidate_status" 2>>${ERR_FILE} | tail -1 2>>${ERR_FILE})
-  echo "`date` Check server $hostgroup:$server:$port , status $stat , GR_STATUS $GR_STATUS, READONLY $READONLY, TRX_BEHING $TRX_BEHIND" >> ${ERR_FILE}
-  if [ "${GR_STATUS}" == "YES" -a "${READONLY}" == "NO" -a "$stat" != "ONLINE" ] ; then
+  read GR_STATUS READONLY TRX_BEHIND <<<$($MYSQL_CMDLINE -h $server -P $port -e "SELECT concat(viable_candidate, ' ', read_only, ' ',transactions_behind) FROM sys.gr_member_routing_candidate_status" 2>>/dev/null | tail -1 2>>${ERR_FILE})
+  echo "`date` Check server $hostgroup:$server:$port , status $stat , GR_STATUS $GR_STATUS, READONLY $READONLY, TRX_BEHIND $TRX_BEHIND" >> ${ERR_FILE}
+  if [ "${GR_STATUS}" == "YES" -a "${READONLY}" == "NO" -a "$stat" != "ONLINE" -a ${TRX_BEHIND} -le $max_replication_lag ] ; then
     echo "`date` Changing server $hostgroup:$server:$port to status ONLINE" >> ${ERR_FILE}
     $PROXYSQL_CMDLINE "UPDATE mysql_servers SET status='ONLINE' WHERE hostgroup_id=$hostgroup AND hostname='$server' AND port='$port';" 2>> ${ERR_FILE}
-  elif [ "${GR_STATUS}" == "YES" -a "${READONLY}" == "YES" -a "$stat" != "ONLINE" ] ; then
-    echo "`date` Changing server $HOSTGROUP_READER_ID:$server:$port to status ONLINE" >> ${ERR_FILE}
-    $PROXYSQL_CMDLINE "UPDATE mysql_servers SET status='ONLINE' WHERE hostgroup_id=$HOSTGROUP_READER_ID AND hostname='$server' AND port='$port';" 2>> ${ERR_FILE}
-  elif [ "${GR_STATUS}" ==  "NO" -o "${READONLY}" == "YES" -a "$stat" = "ONLINE" ] ; then
+  elif [ "${GR_STATUS}" == "YES" -a "${READONLY}" == "YES" -a "$stat" != "ONLINE" -a "$hostgroup" == "$HOSTGROUP_READER_ID" -a ${TRX_BEHIND} -le $max_replication_lag ] ; then
+    echo "`date` Changing server $hostgroup:$server:$port to status ONLINE" >> ${ERR_FILE}
+    $PROXYSQL_CMDLINE "UPDATE mysql_servers SET status='ONLINE' WHERE hostgroup_id=$hostgroup AND hostname='$server' AND port='$port';" 2>> ${ERR_FILE}
+  elif [ "${GR_STATUS}" ==  "NO" -o "${READONLY}" == "YES" -a "$stat" = "ONLINE" -a "$hostgroup" == "$HOSTGROUP_WRITER_ID" ] ; then
+    echo "`date` Changing server $hostgroup:$server:$port to status OFFLINE_SOFT" >> ${ERR_FILE}
+    $PROXYSQL_CMDLINE "UPDATE mysql_servers SET status='OFFLINE_SOFT' WHERE hostgroup_id=$hostgroup AND hostname='$server' AND port='$port';" 2>> ${ERR_FILE}
+  elif [ "${GR_STATUS}" == "YES" -a "${READONLY}" == "NO" -a "$stat" = "ONLINE" -a ${TRX_BEHIND} -gt $max_replication_lag ] ; then
     echo "`date` Changing server $hostgroup:$server:$port to status OFFLINE_SOFT" >> ${ERR_FILE}
     $PROXYSQL_CMDLINE "UPDATE mysql_servers SET status='OFFLINE_SOFT' WHERE hostgroup_id=$hostgroup AND hostname='$server' AND port='$port';" 2>> ${ERR_FILE}
   fi
