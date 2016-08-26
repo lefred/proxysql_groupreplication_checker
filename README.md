@@ -1,5 +1,5 @@
 proxysql_groupreplication_checker
 =================================
 
-This script can be used with ProxySQL as scheduler script to monitor MySQL Group Replication members
+This script is an example of scheduler than can be used with ProxySQL to monitor MySQL Group Replication members
 
